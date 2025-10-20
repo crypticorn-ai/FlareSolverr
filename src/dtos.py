@@ -11,6 +11,7 @@ class ChallengeResolutionResultT:
     cookies: list = None
     userAgent: str = None
     screenshot: str | None = None
+    network: list | None = None
 
     def __init__(self, _dict):
         self.__dict__.update(_dict)
@@ -46,6 +47,7 @@ class V1RequestBase(object):
     download: bool = None   # deprecated v2.0.0, not used
     returnRawHtml: bool = None  # deprecated v2.0.0, not used
     waitInSeconds: int = None
+    captureNetwork: bool = None
 
     def __init__(self, _dict):
         self.__dict__.update(_dict)

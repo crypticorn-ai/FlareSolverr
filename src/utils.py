@@ -1,4 +1,5 @@
 import json
+import os
 import logging
 import os
 import platform
@@ -10,6 +11,10 @@ import urllib.parse
 
 from selenium.webdriver.chrome.webdriver import WebDriver
 import undetected_chromedriver as uc
+try:
+    import seleniumwire.undetected_chromedriver as sw_uc  # type: ignore
+except Exception:
+    sw_uc = None
 
 FLARESOLVERR_VERSION = None
 PLATFORM_VERSION = None
@@ -127,7 +132,13 @@ def get_webdriver(proxy: dict = None) -> WebDriver:
     logging.debug('Launching web browser...')
 
     # undetected_chromedriver
-    options = uc.ChromeOptions()
+    use_selenium_wire = os.environ.get('USE_SELENIUM_WIRE', 'true').lower() == 'true' and sw_uc is not None
+    options = (sw_uc.ChromeOptions() if use_selenium_wire else uc.ChromeOptions())
+    # Enable performance logging so we can read Network events via driver.get_log('performance')
+    try:
+        options.set_capability('goog:loggingPrefs', {'performance': 'ALL', 'browser': 'ALL'})
+    except Exception:
+        pass
     options.add_argument('--no-sandbox')
     options.add_argument('--window-size=1920,1080')
     options.add_argument('--disable-search-engine-choice-screen')
@@ -142,6 +153,17 @@ def get_webdriver(proxy: dict = None) -> WebDriver:
         options.add_argument('--disable-gpu-sandbox')
     options.add_argument('--ignore-certificate-errors')
     options.add_argument('--ignore-ssl-errors')
+
+    # Try to enable WebGL/software rendering in headless/Xvfb to avoid blank canvas screenshots
+    enable_webgl = os.environ.get('ENABLE_WEBGL', 'true').lower() == 'true'
+    if enable_webgl:
+        # Allow GL in environments without GPU; swiftshader is shipped with chromium
+        options.add_argument('--ignore-gpu-blocklist')
+        options.add_argument('--enable-webgl')
+        options.add_argument('--enable-accelerated-2d-canvas')
+        options.add_argument('--use-gl=swiftshader')
+        # Improve offscreen rendering consistency
+        options.add_argument('--enable-unsafe-webgpu')
 
     language = os.environ.get('LANG', None)
     if language is not None:
@@ -188,9 +210,34 @@ def get_webdriver(proxy: dict = None) -> WebDriver:
     # downloads and patches the chromedriver
     # if we don't set driver_executable_path it downloads, patches, and deletes the driver each time
     try:
-        driver = uc.Chrome(options=options, browser_executable_path=browser_executable_path,
-                           driver_executable_path=driver_exe_path, version_main=version_main,
-                           windows_headless=windows_headless, headless=get_config_headless())
+        if use_selenium_wire:
+            wire_opts = {
+                # keep defaults minimal; do not MITM HTTPS to avoid cert warnings unless needed
+                'verify_ssl': True,
+                # increase capture size if large bodies are needed
+                'request_storage': 'memory',
+            }
+            driver = sw_uc.Chrome(options=options, browser_executable_path=browser_executable_path,
+                                  driver_executable_path=driver_exe_path, version_main=version_main,
+                                  windows_headless=windows_headless, headless=get_config_headless(),
+                                  enable_cdp_events=True, seleniumwire_options=wire_opts)
+        else:
+            driver = uc.Chrome(options=options, browser_executable_path=browser_executable_path,
+                               driver_executable_path=driver_exe_path, version_main=version_main,
+                               windows_headless=windows_headless, headless=get_config_headless(),
+                               enable_cdp_events=True)
+        # Enable performance log collection to capture network events
+        try:
+            driver.execute_cdp_cmd(
+                "Log.enable",
+                {}
+            )
+            driver.execute_cdp_cmd(
+                "Network.enable",
+                {}
+            )
+        except Exception:
+            pass
     except Exception as e:
         logging.error("Error starting Chrome: %s" % e)
         # No point in continuing if we cannot retrieve the driver

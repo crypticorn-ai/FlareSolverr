@@ -1,0 +1,23 @@
+FROM ghcr.io/flaresolverr/flaresolverr:latest
+
+USER root
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends x11vnc && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN python -m pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir selenium-wire==5.1.0
+
+ENV VNC_PASSWORD_FILE=/root/.vncpass
+ARG VNC_PASSWORD
+ENV VNC_PASSWORD=${VNC_PASSWORD}
+RUN x11vnc -storepasswd ${VNC_PASSWORD:-vncPass123} $VNC_PASSWORD_FILE
+
+ENV DISPLAY=:0
+ENV HEADLESS=false
+
+COPY src/ /app/
+
+CMD sh -lc 'Xvfb :0 -screen 0 1920x1080x24 & sleep 1; x11vnc -display :0 -forever -shared -rfbport 5900 -rfbauth $VNC_PASSWORD_FILE -o /tmp/x11vnc.log & exec python /app/flaresolverr.py'
+

@@ -2,8 +2,11 @@
 version: "2.1"
 services:
   flaresolverr:
-    # DockerHub mirror flaresolverr/flaresolverr:latest
-    image: ghcr.io/flaresolverr/flaresolverr:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.vnc
+      args:
+        - VNC_PASSWORD=${VNC_PASSWORD:-vncPass123}
     container_name: flaresolverr
     environment:
       - LOG_LEVEL=${LOG_LEVEL:-info}
@@ -13,6 +16,8 @@ services:
       - TZ=Europe/London
     ports:
       - "${PORT:-8191}:8191"
+      - "${VNC_PORT:-5900}:5900"
     volumes:
       - /var/lib/flaresolver:/config
+    shm_size: "2g"
     restart: unless-stopped

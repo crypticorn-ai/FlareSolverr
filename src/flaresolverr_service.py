@@ -288,6 +288,34 @@ def _evil_logic(req: V1RequestBase, driver: WebDriver, method: str) -> Challenge
     res.message = ""
 
 
+    # optionally start capturing performance logs and attach CDP listeners to capture network
+    capture_network = bool(getattr(req, 'captureNetwork', False))
+    network_entries = []
+    if capture_network:
+        try:
+            driver.add_cdp_listener("Network.requestWillBeSent", lambda m: network_entries.append({
+                "method": "Network.requestWillBeSent",
+                "params": m.get("params", {}),
+                "message": m,
+            }))
+            driver.add_cdp_listener("Network.responseReceived", lambda m: network_entries.append({
+                "method": "Network.responseReceived",
+                "params": m.get("params", {}),
+                "message": m,
+            }))
+            driver.add_cdp_listener("Network.requestWillBeSentExtraInfo", lambda m: network_entries.append({
+                "method": "Network.requestWillBeSentExtraInfo",
+                "params": m.get("params", {}),
+                "message": m,
+            }))
+            driver.add_cdp_listener("Network.responseReceivedExtraInfo", lambda m: network_entries.append({
+                "method": "Network.responseReceivedExtraInfo",
+                "params": m.get("params", {}),
+                "message": m,
+            }))
+        except Exception:
+            pass
+
     # navigate to the page
     logging.debug(f'Navigating to... {req.url}')
     if method == 'POST':
@@ -392,10 +420,66 @@ def _evil_logic(req: V1RequestBase, driver: WebDriver, method: str) -> Challenge
         challenge_res.headers = {}  # todo: fix, selenium not provides this info
 
         if req.waitInSeconds and req.waitInSeconds > 0:
-            logging.info("Waiting " + str(req.waitInSeconds) + " seconds before returning the response...")
-            time.sleep(req.waitInSeconds)
+            total = int(req.waitInSeconds)
+            logging.info("Waiting " + str(total) + " seconds before returning the response...")
+            if capture_network:
+                # poll performance logs periodically to ensure we don't miss entries
+                for _ in range(total):
+                    try:
+                        logs = driver.get_log('performance')
+                        for entry in logs:
+                            try:
+                                network_entries.append(entry.get('message'))
+                            except Exception:
+                                continue
+                    except Exception:
+                        pass
+                    time.sleep(1)
+            else:
+                time.sleep(total)
 
+        # ensure the canvas/webgl content is flushed before taking screenshot
+        try:
+            driver.execute_script("return new Promise(r=>requestAnimationFrame(()=>r()))")
+        except Exception:
+            pass
         challenge_res.response = driver.page_source
+
+    # collect network logs if requested
+    if capture_network:
+        try:
+            logs = driver.get_log('performance')
+            for entry in logs:
+                try:
+                    network_entries.append(entry.get('message'))
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        # Selenium Wire requests (if available)
+        try:
+            req_list = getattr(driver, 'requests', None)
+            if req_list is not None:
+                for r in req_list:
+                    try:
+                        item = {
+                            'type': 'xhr',  # best-effort; Selenium Wire captures XHR/fetch/others
+                            'method': getattr(r, 'method', None),
+                            'url': getattr(r, 'url', None),
+                            'requestHeaders': dict(getattr(r, 'headers', {}) or {}),
+                            'status': getattr(getattr(r, 'response', None), 'status_code', None),
+                            'responseHeaders': dict(getattr(getattr(r, 'response', None), 'headers', {}) or {}),
+                        }
+                        network_entries.append(item)
+                    except Exception:
+                        continue
+        except Exception:
+            pass
+        if network_entries:
+            try:
+                challenge_res.network = network_entries
+            except Exception:
+                pass
 
     if req.returnScreenshot:
         challenge_res.screenshot = driver.get_screenshot_as_base64()
