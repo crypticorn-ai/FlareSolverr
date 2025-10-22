@@ -61,6 +61,9 @@ COPY package.json ../
 EXPOSE 8191
 EXPOSE 8192
 
+# Enable Selenium Wire for request/response body capture
+ENV USE_SELENIUM_WIRE=true
+
 # dumb-init avoids zombie chromium processes
 ENTRYPOINT ["/usr/bin/dumb-init", "--"]
 

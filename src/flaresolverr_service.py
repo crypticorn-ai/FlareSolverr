@@ -422,9 +422,14 @@ def _evil_logic(req: V1RequestBase, driver: WebDriver, method: str) -> Challenge
         if req.waitInSeconds and req.waitInSeconds > 0:
             total = int(req.waitInSeconds)
             logging.info("Waiting " + str(total) + " seconds before returning the response...")
+            
+            # Check if early exit is enabled
+            early_exit_enabled = bool(getattr(req, 'earlyExitOnCapture', False))
+            capture_patterns = getattr(req, 'captureUrlPatterns', None)
+            
             if capture_network:
                 # poll performance logs periodically to ensure we don't miss entries
-                for _ in range(total):
+                for i in range(total):
                     try:
                         logs = driver.get_log('performance')
                         for entry in logs:
@@ -434,6 +439,30 @@ def _evil_logic(req: V1RequestBase, driver: WebDriver, method: str) -> Challenge
                                 continue
                     except Exception:
                         pass
+                    
+                    # Early exit: check if all required patterns are captured in Selenium Wire
+                    if early_exit_enabled and capture_patterns:
+                        try:
+                            req_list = getattr(driver, 'requests', None)
+                            if req_list is not None:
+                                # Track which patterns we've found
+                                found_patterns = set()
+                                for r in req_list:
+                                    url = getattr(r, 'url', None)
+                                    resp = getattr(r, 'response', None)
+                                    # Check if response is complete
+                                    if url and resp is not None:
+                                        for pattern in capture_patterns:
+                                            if pattern in url:
+                                                found_patterns.add(pattern)
+                                
+                                # If all patterns found, exit early
+                                if len(found_patterns) == len(capture_patterns):
+                                    logging.info(f"Early exit: All {len(capture_patterns)} required patterns captured after {i+1} seconds")
+                                    break
+                        except Exception:
+                            pass
+                    
                     time.sleep(1)
             else:
                 time.sleep(total)
@@ -460,16 +489,79 @@ def _evil_logic(req: V1RequestBase, driver: WebDriver, method: str) -> Challenge
         try:
             req_list = getattr(driver, 'requests', None)
             if req_list is not None:
+                # Get URL patterns from request, or None to capture all URLs
+                capture_patterns = getattr(req, 'captureUrlPatterns', None)
+                
                 for r in req_list:
                     try:
+                        url = getattr(r, 'url', None)
+                        
+                        # Skip if URL doesn't match our patterns (if patterns are provided)
+                        if capture_patterns and url and not any(pattern in url for pattern in capture_patterns):
+                            continue
+                        
                         item = {
                             'type': 'xhr',  # best-effort; Selenium Wire captures XHR/fetch/others
                             'method': getattr(r, 'method', None),
-                            'url': getattr(r, 'url', None),
+                            'url': url,
                             'requestHeaders': dict(getattr(r, 'headers', {}) or {}),
                             'status': getattr(getattr(r, 'response', None), 'status_code', None),
                             'responseHeaders': dict(getattr(getattr(r, 'response', None), 'headers', {}) or {}),
                         }
+                        
+                        # Capture request body
+                        try:
+                            req_body = getattr(r, 'body', None)
+                            if req_body:
+                                if isinstance(req_body, bytes):
+                                    try:
+                                        # Try to decode as UTF-8 string
+                                        item['requestBody'] = req_body.decode('utf-8')
+                                    except Exception:
+                                        # If not UTF-8, store as base64
+                                        import base64
+                                        item['requestBody'] = base64.b64encode(req_body).decode('ascii')
+                                else:
+                                    item['requestBody'] = str(req_body)
+                        except Exception:
+                            pass
+                        
+                        # Capture response body
+                        try:
+                            resp = getattr(r, 'response', None)
+                            if resp is not None:
+                                resp_body = getattr(resp, 'body', None)
+                                if resp_body:
+                                    if isinstance(resp_body, bytes):
+                                        # Check content-type to determine if it's JSON/text or binary
+                                        headers_dict = dict(getattr(resp, 'headers', {}) or {})
+                                        # Headers can be case-insensitive, check both
+                                        content_type = headers_dict.get('Content-Type') or headers_dict.get('content-type') or ''
+                                        if any(t in content_type.lower() for t in ['json', 'text', 'javascript', 'xml', 'html']):
+                                            try:
+                                                # Try to decode as UTF-8 string
+                                                decoded = resp_body.decode('utf-8')
+                                                item['responseBody'] = decoded
+                                                # If it looks like JSON, try to parse it
+                                                if 'json' in content_type.lower():
+                                                    try:
+                                                        import json as _json
+                                                        item['responseBody'] = _json.loads(decoded)
+                                                    except Exception:
+                                                        pass  # Keep as string if JSON parsing fails
+                                            except Exception:
+                                                # If decode fails, store as base64
+                                                import base64
+                                                item['responseBody'] = base64.b64encode(resp_body).decode('ascii')
+                                        else:
+                                            # Binary content (images, etc.) - store as base64
+                                            import base64
+                                            item['responseBody'] = base64.b64encode(resp_body).decode('ascii')
+                                    else:
+                                        item['responseBody'] = str(resp_body)
+                        except Exception:
+                            pass
+                        
                         network_entries.append(item)
                     except Exception:
                         continue

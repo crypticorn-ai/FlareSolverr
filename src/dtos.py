@@ -48,6 +48,8 @@ class V1RequestBase(object):
     returnRawHtml: bool = None  # deprecated v2.0.0, not used
     waitInSeconds: int = None
     captureNetwork: bool = None
+    captureUrlPatterns: list = None  # URL patterns to filter network capture (e.g., ['api.example.com', 'cdn.example.com'])
+    earlyExitOnCapture: bool = None  # Return as soon as all captureUrlPatterns are captured (requires captureUrlPatterns)
 
     def __init__(self, _dict):
         self.__dict__.update(_dict)

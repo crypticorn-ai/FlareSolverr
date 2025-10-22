@@ -7,7 +7,7 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 RUN python -m pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir selenium-wire==5.1.0
+    pip install --no-cache-dir selenium-wire==5.1.0 'blinker<1.8' setuptools
 
 ENV VNC_PASSWORD_FILE=/root/.vncpass
 ARG VNC_PASSWORD
@@ -16,6 +16,7 @@ RUN x11vnc -storepasswd ${VNC_PASSWORD:-vncPass123} $VNC_PASSWORD_FILE
 
 ENV DISPLAY=:0
 ENV HEADLESS=false
+ENV USE_SELENIUM_WIRE=true
 
 COPY src/ /app/
 
