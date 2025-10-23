@@ -53,13 +53,14 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: ./Dockerfile
+          file: ./Dockerfile.vnc
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=local,src=/tmp/.buildx-cache
           cache-to: type=local,dest=/tmp/.buildx-cache-new,mode=max
           build-args: |
+            VNC_PASSWORD=123456
             CACHEBUST=${{ github.run_id }} # invalidates dependency cache on every workflow run
       - name: Update Docker buildx cache
         run: |
